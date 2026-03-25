@@ -1,0 +1,35 @@
+{
+  "name": "wa-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node src/index.js",
+    "demo:ocr": "node src/scripts/demo-ocr-suggest.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "axios": "^1.9.0",
+    "chart.js": "^4.5.0",
+    "dayjs": "^1.11.18",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "googleapis": "^149.0.0",
+    "mssql": "^11.0.1",
+    "openai": "^4.103.0",
+    "pg": "^8.20.0",
+    "pino": "^10.3.0",
+    "punycode": "^2.3.1",
+    "puppeteer": "^24.36.1",
+    "qrcode-terminal": "^0.12.0",
+    "react-chartjs-2": "^5.3.0",
+    "tesseract.js": "^6.0.1",
+    "whatsapp-web.js": "github:timothydillan/whatsapp-web.js#fix/duplicate-events-and-bindings"
+  }
+}

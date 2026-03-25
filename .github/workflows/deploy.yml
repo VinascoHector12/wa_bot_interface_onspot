@@ -1,0 +1,247 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Pipeline CI/CD — wa-bot-interface-onspot
+#
+# Archivo:      .github/workflows/deploy.yml
+# Repositorio:  VinascoHector12/wa_bot_interface_onspot
+#
+# ESPECIAL:
+# - Requiere VITE_* build args con URLs del ALB
+# - Strategy: Recreate (no RollingUpdate) — WhatsApp no permite paralelo
+# - Timeout extendido a 10 min por el arranque de Puppeteer/Chromium
+# ═══════════════════════════════════════════════════════════════════════
+name: CI/CD — wa-bot-interface-onspot
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+      - "docs/**"
+
+concurrency:
+  group: deploy-wa-bot-onspot-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION:     "us-east-2"
+  AWS_ACCOUNT_ID: "263649228715"
+  EKS_CLUSTER:    "llm-platform-cluster"
+  K8S_NAMESPACE:  "llm-platform"
+  SERVICE_NAME:   "wa-bot-interface-onspot"
+  CONTAINER_PORT: "3401"
+  ECR_IMAGE:      "263649228715.dkr.ecr.us-east-2.amazonaws.com/wa-bot-interface-onspot"
+  ALB_URL:        "k8s-llmplatform-6af42fbade-1015837514.us-east-2.elb.amazonaws.com"
+
+jobs:
+  build-and-push:
+    name: 🐳 Build & Push ECR
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image-tag:  ${{ steps.meta.outputs.sha-tag }}
+      full-image: ${{ steps.meta.outputs.full-image }}
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 📋 Mostrar variables del pipeline
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  PIPELINE: ${{ env.SERVICE_NAME }}"
+          echo "════════════════════════════════════════"
+          echo "  Repositorio   : ${{ github.repository }}"
+          echo "  Branch        : ${{ github.ref_name }}"
+          echo "  Commit SHA    : ${{ github.sha }}"
+          echo "  Mensaje       : ${{ github.event.head_commit.message }}"
+          echo "  Actor         : ${{ github.actor }}"
+          echo "────────────────────────────────────────"
+          echo "  AWS Region    : ${{ env.AWS_REGION }}"
+          echo "  AWS Account   : ${{ env.AWS_ACCOUNT_ID }}"
+          echo "  EKS Cluster   : ${{ env.EKS_CLUSTER }}"
+          echo "  K8s Namespace : ${{ env.K8S_NAMESPACE }}"
+          echo "  Servicio K8s  : ${{ env.SERVICE_NAME }}"
+          echo "  Puerto        : ${{ env.CONTAINER_PORT }}"
+          echo "  ECR Image     : ${{ env.ECR_IMAGE }}"
+          echo "────────────────────────────────────────"
+          echo "  VITE_AUTH_SERVICE_URL  : http://${{ env.ALB_URL }}/auth"
+          echo "  VITE_LLM_SERVICE_URL   : http://${{ env.ALB_URL }}/chat"
+          echo "  VITE_CHAT_SERVICE_URL  : http://${{ env.ALB_URL }}/waonspot"
+          echo "════════════════════════════════════════"
+
+      - name: 🔐 Configurar credenciales AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔑 Login a Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 🏷️ Generar tag de imagen
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          FULL_IMAGE="${{ env.ECR_IMAGE }}:${SHORT_SHA}"
+          echo "sha-tag=${SHORT_SHA}"     >> $GITHUB_OUTPUT
+          echo "full-image=${FULL_IMAGE}" >> $GITHUB_OUTPUT
+          echo "  Tag generado  : ${SHORT_SHA}"
+          echo "  Imagen        : ${FULL_IMAGE}"
+
+      - name: ⚙️ Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🚀 Build y Push imagen a ECR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.ECR_IMAGE }}:${{ steps.meta.outputs.sha-tag }}
+            ${{ env.ECR_IMAGE }}:latest
+          cache-from: type=registry,ref=${{ env.ECR_IMAGE }}:cache
+          cache-to:   type=registry,ref=${{ env.ECR_IMAGE }}:cache,mode=max
+          build-args: |
+            NODE_ENV=production
+            VITE_AUTH_SERVICE_URL=http://${{ env.ALB_URL }}/auth
+            VITE_LLM_SERVICE_URL=http://${{ env.ALB_URL }}/chat
+            VITE_CHAT_SERVICE_URL=http://${{ env.ALB_URL }}/waonspot
+
+      - name: ✅ Confirmar imagen publicada
+        run: |
+          echo "  → ${{ steps.meta.outputs.full-image }}"
+          echo "  → ${{ env.ECR_IMAGE }}:latest"
+
+  deploy:
+    name: 🚢 Deploy a EKS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      - name: 📋 Mostrar variables del deploy
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  DEPLOY: ${{ env.SERVICE_NAME }}"
+          echo "════════════════════════════════════════"
+          echo "  Imagen  : ${{ needs.build-and-push.outputs.full-image }}"
+          echo "  Tag     : ${{ needs.build-and-push.outputs.image-tag }}"
+          echo "  Cluster : ${{ env.EKS_CLUSTER }}"
+          echo "  NS      : ${{ env.K8S_NAMESPACE }}"
+          echo "  Actor   : ${{ github.actor }}"
+          echo "════════════════════════════════════════"
+
+      - name: 🔐 Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ⚙️ Instalar kubectl v1.33
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.33.0"
+
+      - name: 🔧 Configurar kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: 📊 Estado ANTES del deploy
+        run: |
+          kubectl get pods -n ${{ env.K8S_NAMESPACE }} \
+            -l app=${{ env.SERVICE_NAME }} -o wide
+          kubectl get deployment ${{ env.SERVICE_NAME }} \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -o jsonpath='Imagen actual: {.spec.template.spec.containers[0].image}{"\n"}' 2>/dev/null || echo "Primer deploy"
+
+      - name: 🔄 Actualizar imagen en el Deployment
+        run: |
+          FULL_IMAGE="${{ needs.build-and-push.outputs.full-image }}"
+          echo "Actualizando a: ${FULL_IMAGE}"
+          kubectl set image deployment/${{ env.SERVICE_NAME }} \
+            ${{ env.SERVICE_NAME }}=${FULL_IMAGE} \
+            -n ${{ env.K8S_NAMESPACE }}
+          kubectl annotate deployment/${{ env.SERVICE_NAME }} \
+            -n ${{ env.K8S_NAMESPACE }} \
+            kubernetes.io/change-cause="CI/CD: ${{ github.sha }} por ${{ github.actor }} [$(date -u '+%Y-%m-%d %H:%M UTC')]" \
+            --overwrite
+
+      - name: ⏳ Verificar que el nuevo pod esta Running
+        run: |
+          NEW_SHA="${{ needs.build-and-push.outputs.image-tag }}"
+          NAMESPACE="${{ env.K8S_NAMESPACE }}"
+          SERVICE="${{ env.SERVICE_NAME }}"
+          TIMEOUT=600
+          ELAPSED=0
+          INTERVAL=5
+
+          echo "Buscando pod con tag: ${NEW_SHA}"
+          echo "Verificando cada ${INTERVAL}s (maximo ${TIMEOUT}s)..."
+
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+
+            READY=$(kubectl get pods -n $NAMESPACE \
+              -l app=$SERVICE \
+              -o jsonpath='{range .items[*]}{.spec.containers[0].image}{" "}{.status.containerStatuses[0].ready}{"\n"}{end}' \
+              2>/dev/null | grep "${NEW_SHA}" | grep " true" | wc -l | tr -d ' ')
+
+            if [ "$READY" -gt "0" ]; then
+              echo ""
+              echo "✅ Deploy exitoso en ${ELAPSED}s"
+              kubectl get pods -n $NAMESPACE -l app=$SERVICE -o wide
+              kubectl get deployment $SERVICE -n $NAMESPACE \
+                -o jsonpath='Imagen desplegada: {.spec.template.spec.containers[0].image}{"\n"}'
+              echo ""
+              echo "=== Ultimos logs ==="
+              kubectl logs -n $NAMESPACE -l app=$SERVICE --tail=15 --prefix=true 2>/dev/null || true
+              exit 0
+            fi
+
+            CRASH=$(kubectl get pods -n $NAMESPACE \
+              -l app=$SERVICE \
+              -o jsonpath='{range .items[*]}{.spec.containers[0].image}{" "}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' \
+              2>/dev/null | grep "${NEW_SHA}" | grep -E "CrashLoopBackOff|Error|OOMKilled" || true)
+
+            if [ -n "$CRASH" ]; then
+              echo "❌ El nuevo pod crasheo: $CRASH"
+              kubectl get pods -n $NAMESPACE -l app=$SERVICE
+              kubectl logs -n $NAMESPACE -l app=$SERVICE --tail=30 --prefix=true 2>/dev/null || true
+              exit 1
+            fi
+
+            if [ $(($ELAPSED % 15)) -eq 0 ]; then
+              echo "  [${ELAPSED}s] Pods:"
+              kubectl get pods -n $NAMESPACE -l app=$SERVICE \
+                --no-headers 2>/dev/null | awk '{print "    " $1 "  " $2 "  " $3}'
+            fi
+
+            sleep $INTERVAL
+            ELAPSED=$(($ELAPSED + $INTERVAL))
+          done
+
+          echo "❌ Timeout (${TIMEOUT}s): el pod no arranco"
+          kubectl get pods -n $NAMESPACE -l app=$SERVICE
+          exit 1
+
+      - name: ⏮️ Rollback automático si falla
+        if: failure()
+        run: |
+          echo "::error::Deploy falló. Iniciando rollback..."
+          kubectl rollout undo deployment/${{ env.SERVICE_NAME }} \
+            -n ${{ env.K8S_NAMESPACE }}
+          kubectl rollout status deployment/${{ env.SERVICE_NAME }} \
+            -n ${{ env.K8S_NAMESPACE }} --timeout=300s
+          echo "Rollback completado."
+          kubectl get pods -n ${{ env.K8S_NAMESPACE }} \
+            -l app=${{ env.SERVICE_NAME }} -o wide

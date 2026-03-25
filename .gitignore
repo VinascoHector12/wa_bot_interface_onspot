@@ -1,0 +1,44 @@
+# Dependencias de Node.js
+node_modules/
+
+# Variables de entorno
+.env
+src/.env
+
+# Datos de sesión de whatsapp-web.js
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Carpeta de medios (imágenes descargadas)
+media/
+src/media/
+
+# Historia de chats
+history/
+src/history/
+
+# Datos generados y cache
+src/data/
+src/.ocr-cache.json
+
+# Archivos de Tesseract
+src/eng.traineddata
+src/spa.traineddata
+
+# Configuración de IDE
+.vscode/
+/.vscode
+
+# Build del cliente
+client/dist/
+client/node_modules/
+
+# Archivos generados por el sistema operativo
+.DS_Store
+Thumbs.db
+
+# Autenticación de servicios
+src/service-account.json
+
+# Auth de Baileys
+src/.baileys_auth

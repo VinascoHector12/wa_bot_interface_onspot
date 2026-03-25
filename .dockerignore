@@ -1,0 +1,54 @@
+# Node modules
+node_modules/
+client/node_modules/
+npm-debug.log
+
+# Build outputs
+client/dist/
+
+# Environment files
+.env
+src/.env
+client/.env
+client/.env.*
+
+# WhatsApp session data (will be in volumes)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# History and media (will be in volumes)
+src/history/
+src/media/
+
+# OCR cache
+src/.ocr-cache.json
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Documentation
+*.md
+!README.md
+
+# Tests
+tests/
+__tests__/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Service account (sensitive)
+src/service-account.json
+
+# Build scripts
+build-frontend.ps1
