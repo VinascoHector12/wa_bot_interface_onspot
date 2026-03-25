@@ -18,12 +18,7 @@ import { limitHeavy, yieldToLoop } from '../utils/concurrency.js';
 import { transcribeAudioFile } from '../services/asr.js';
 import {
   getIdentity,
-  markIdentified,
-  markIntroDone,
-  extractNameAndOrigin as extractNameOriginFromText,
-  shouldNudgeForIdentity,
-  markIntroAsked,
-  buildNudgeText
+  markIdentified
 } from '../utils/identityStore.js';
 import { maybeSuggestImageForText } from '../utils/mediaSuggestFlow.js';
 import { detectImageTopic } from '../utils/imageKeywords.js';
@@ -83,27 +78,6 @@ function stripIdentityQuestions(txt = '') {
   return out || 'Gracias. ¿En qué puedo ayudarte?';
 }
 
-/* --- Heurística: respuestas que son SOLO el origen (para agradecer y salir) --- */
-function normalize(s=''){
-  return s
-    .toLowerCase()
-    .normalize('NFD').replace(/\p{Diacritic}/gu,'')
-    .replace(/[^\p{L}\p{N}\s]/gu,' ')
-    .replace(/\s+/g,' ')
-    .trim();
-}
-const ORIGIN_SINGLE_TOKENS = new Set(['correo','email','mail','pagina','web','site','sitio','instagram','tiktok','ig','otro']);
-const ORIGIN_FULL_PHRASES = new Set(['desde la pagina','directamente desde la pagina']);
-const OPTION_ONLY_RE = /^(?:opcion|opción)?\s*[1-4]$/i;
-function isPureOriginReply(text) {
-  const n = normalize(text);
-  if (!n) return false;
-  if (OPTION_ONLY_RE.test(n)) return true;
-  if (ORIGIN_SINGLE_TOKENS.has(n)) return true;
-  if (ORIGIN_FULL_PHRASES.has(n)) return true;
-  return false;
-}
-
 // [LOG] helper: no rompe el flujo si falla la BD
 async function logMessageSafe(args) {
   try { await insertMessage(args); } catch (e) { console.error('[chatlog] insert failed', e?.message || e); }
@@ -154,7 +128,6 @@ async function handleSingleMessage(msg) {
           const push = (c?.pushname || '').trim();
           if (push) {
             identity = markIdentified(chatId, { name: push, phone, via: 'wa-pushname' });
-            // NO markIntroDone aquí: puede faltar 'origin'
           }
         }
       } catch {}
@@ -180,35 +153,6 @@ async function handleSingleMessage(msg) {
       }
 
       if (!msg.fromMe && text) {
-        const wasMissingOrigin = !identity.origin;
-        const expectingOrigin = !!identity.expectingOrigin;
-
-        if (expectingOrigin && wasMissingOrigin && isPureOriginReply(text)) {
-          const { origin: originFromText } = extractNameOriginFromText(text);
-          if (originFromText) {
-            identity = markIdentified(chatId, { origin: originFromText, phone, expectingOrigin: false });
-            markIntroDone(chatId);
-
-            const who = identity.name ? `, ${identity.name}` : '';
-            const ack = `¡Gracias por la información${who}! ¿En que más puedo ayudarte?`;
-            hist.push({ role: 'assistant', content: ack, ts: Date.now() });
-            saveChatHistory(chatId, hist);
-
-            await logMessageSafe({
-              chatId, phone, role: 'user', msgType: msg.type || 'chat',
-              content: text || null,
-              ts: (typeof msg.timestamp === 'number' ? msg.timestamp * 1000 : Date.now())
-            });
-            await logMessageSafe({ chatId, phone, role: 'assistant', msgType: 'chat', content: ack, ts: Date.now() });
-
-            const sentMsg = await client.sendMessage(chatId, ack);
-            registerBotMessage(chatId, sentMsg.id._serialized);
-            setLastProcessedMsgId(chatId, msg.id._serialized);
-            markBotReplied(chatId);
-            return;
-          }
-        }
-
         hist.push({ role: 'user', content: text, ts: (typeof msg.timestamp === 'number' ? msg.timestamp * 1000 : Date.now()) });
         saveChatHistory(chatId, hist);
 
@@ -408,16 +352,6 @@ async function handleSingleMessage(msg) {
 
             await logMessageSafe({ chatId, phone, role: 'assistant', msgType: 'chat', content: cleanReply, ts: Date.now() });
 
-            const need = shouldNudgeForIdentity(text, identity);
-            if (need) {
-              const nudge = buildNudgeText(identity);
-              if (nudge) {
-                await client.sendMessage(chatId, nudge);
-                await logMessageSafe({ chatId, phone, role: 'assistant', msgType: 'chat', content: nudge, ts: Date.now() });
-                markIntroAsked(chatId, 'origin');
-              }
-            }
-
             setLastProcessedMsgId(chatId, msg.id._serialized);
             markBotReplied(chatId);
             return;
@@ -522,16 +456,6 @@ async function handleSingleMessage(msg) {
 
             await logMessageSafe({ chatId, phone, role: 'assistant', msgType: 'chat', content: cleanReply, ts: Date.now() });
 
-            const need = shouldNudgeForIdentity(text, identity);
-            if (need) {
-              const nudge = buildNudgeText(identity);
-              if (nudge) {
-                await client.sendMessage(chatId, nudge);
-                await logMessageSafe({ chatId, phone, role: 'assistant', msgType: 'chat', content: nudge, ts: Date.now() });
-                markIntroAsked(chatId, 'origin');
-              }
-            }
-
             setLastProcessedMsgId(chatId, msg.id._serialized);
             markBotReplied(chatId);
             return;
@@ -584,16 +508,6 @@ async function handleSingleMessage(msg) {
         registerBotMessage(chatId, sentMsg.id._serialized);
 
         await logMessageSafe({ chatId, phone, role: 'assistant', msgType: 'chat', content: cleanReply, ts: Date.now() });
-
-        const need = shouldNudgeForIdentity(text, identity);
-        if (need) {
-          const nudge = buildNudgeText(identity);
-          if (nudge) {
-            await client.sendMessage(chatId, nudge);
-            await logMessageSafe({ chatId, phone, role: 'assistant', msgType: 'chat', content: nudge, ts: Date.now() });
-            markIntroAsked(chatId, 'origin');
-          }
-        }
 
         setLastProcessedMsgId(chatId, msg.id._serialized);
         markBotReplied(chatId);

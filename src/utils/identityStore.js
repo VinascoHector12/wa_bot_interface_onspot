@@ -220,8 +220,7 @@ export function extractNameAndOrigin(text='') {
 const INTRO_ASK_COOLDOWN_MS = 3 * 60 * 1000; // 3min
 
 export function missingIdentityField(identity) {
-  // ⚠️ Ya NO pedimos 'name' al usuario. El nombre sólo se obtiene de WhatsApp/panel.
-  if (!identity?.origin) return 'origin';
+  // Origen no requerido para este bot
   return null;
 }
 
